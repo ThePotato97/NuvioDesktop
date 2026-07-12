@@ -434,7 +434,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         }
 
-        RenderPlayerControls(displayedPositionMs = displayedPositionMs, isEpisode = isEpisode)
+        // On desktop the native mpv WebView2 overlay renders the player controls,
+        // so skip the shared Compose control bar to avoid a duplicate second bar.
+        if (!isDesktop) {
+            RenderPlayerControls(displayedPositionMs = displayedPositionMs, isEpisode = isEpisode)
+        }
         RenderPlaybackOverlays(
             runtime = runtime,
             displayedPositionMs = displayedPositionMs,
