@@ -110,6 +110,7 @@ private fun NativePlayerSurface(
     val playerSettings by PlayerSettingsRepository.uiState.collectAsState()
     val decoderPriority = playerSettings.decoderPriority
     val nvidiaRtxSuperResolutionEnabled = playerSettings.nvidiaRtxSuperResolutionEnabled
+    val autoCropEnabled = playerSettings.autoCropEnabled
 
     LaunchedEffect(controller, sourceUrl, playbackHeaders) {
         onControllerReady(controller)
@@ -162,6 +163,9 @@ private fun NativePlayerSurface(
             initialPositionMs = initialPositionMs,
             decoderPriority = decoderPriority,
             nvidiaRtxSuperResolutionEnabled = nvidiaRtxSuperResolutionEnabled,
+            // Read fresh (not an effect key) so the initial decode mode is correct
+            // without re-attaching the whole player when the toggle flips live.
+            autoCropEnabled = autoCropEnabled,
             onError = { message -> latestOnError.value(message) },
         )
         onControllerReady(controller)
@@ -177,6 +181,10 @@ private fun NativePlayerSurface(
 
     LaunchedEffect(controller, resizeMode) {
         controller.setResizeMode(resizeMode)
+    }
+
+    LaunchedEffect(controller, autoCropEnabled) {
+        controller.setAutoCropEnabled(autoCropEnabled)
     }
 
     LaunchedEffect(controller, playerControlsState) {

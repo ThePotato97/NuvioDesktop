@@ -1547,6 +1547,15 @@ button:disabled {
   background: var(--theme-accent-strong);
 }
 
+.action.active {
+  background: var(--theme-accent);
+  color: var(--theme-on-accent);
+}
+
+.action.active:hover {
+  background: var(--theme-accent-strong);
+}
+
 @media (min-width: 761px) {
   .action-row {
     justify-content: space-between;

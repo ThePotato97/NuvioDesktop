@@ -86,6 +86,7 @@ internal actual object PlayerSettingsStorage {
     private const val iosSaturationKey = "ios_saturation"
     private const val iosGammaKey = "ios_gamma"
     private const val nvidiaRtxSuperResolutionEnabledKey = "nvidia_rtx_super_resolution_enabled"
+    private const val autoCropEnabledKey = "auto_crop_enabled"
     private val syncKeys = listOf(
         showLoadingOverlayKey,
         showParentalGuideKey,
@@ -93,6 +94,7 @@ internal actual object PlayerSettingsStorage {
         holdToSpeedEnabledKey,
         holdToSpeedValueKey,
         nvidiaRtxSuperResolutionEnabledKey,
+        autoCropEnabledKey,
         touchGesturesEnabledKey,
         externalPlayerEnabledKey,
         externalPlayerForwardSubtitlesKey,
@@ -299,6 +301,9 @@ internal actual object PlayerSettingsStorage {
     actual fun loadNvidiaRtxSuperResolutionEnabled(): Boolean? = loadBoolean(nvidiaRtxSuperResolutionEnabledKey)
     actual fun saveNvidiaRtxSuperResolutionEnabled(enabled: Boolean) = saveBoolean(nvidiaRtxSuperResolutionEnabledKey, enabled)
 
+    actual fun loadAutoCropEnabled(): Boolean? = loadBoolean(autoCropEnabledKey)
+    actual fun saveAutoCropEnabled(enabled: Boolean) = saveBoolean(autoCropEnabledKey, enabled)
+
     private fun scoped(key: String): String = ProfileScopedKey.of(key)
     private fun loadString(key: String): String? = store.getString(scoped(key))
     private fun saveString(key: String, value: String) = store.putString(scoped(key), value)
@@ -382,6 +387,7 @@ internal actual object PlayerSettingsStorage {
         loadIosSaturation()?.let { put(iosSaturationKey, encodeSyncInt(it)) }
         loadIosGamma()?.let { put(iosGammaKey, encodeSyncInt(it)) }
         loadNvidiaRtxSuperResolutionEnabled()?.let { put(nvidiaRtxSuperResolutionEnabledKey, encodeSyncBoolean(it)) }
+        loadAutoCropEnabled()?.let { put(autoCropEnabledKey, encodeSyncBoolean(it)) }
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
@@ -456,5 +462,6 @@ internal actual object PlayerSettingsStorage {
         payload.decodeSyncInt(iosSaturationKey)?.let(::saveIosSaturation)
         payload.decodeSyncInt(iosGammaKey)?.let(::saveIosGamma)
         payload.decodeSyncBoolean(nvidiaRtxSuperResolutionEnabledKey)?.let(::saveNvidiaRtxSuperResolutionEnabled)
+        payload.decodeSyncBoolean(autoCropEnabledKey)?.let(::saveAutoCropEnabled)
     }
 }

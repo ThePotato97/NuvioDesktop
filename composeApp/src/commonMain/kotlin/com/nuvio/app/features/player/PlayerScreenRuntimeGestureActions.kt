@@ -260,6 +260,13 @@ internal fun PlayerScreenRuntime.cycleResizeMode() {
     controlsVisible = true
 }
 
+internal fun PlayerScreenRuntime.toggleAutoCrop() {
+    val enabled = !PlayerSettingsRepository.uiState.value.autoCropEnabled
+    PlayerSettingsRepository.setAutoCropEnabled(enabled)
+    showGestureMessage(if (enabled) autoCropOnLabel else autoCropOffLabel)
+    controlsVisible = true
+}
+
 internal fun PlayerScreenRuntime.cyclePlaybackSpeed() {
     val speeds = listOf(1f, 1.25f, 1.5f, 2f)
     val current = playbackSnapshot.playbackSpeed

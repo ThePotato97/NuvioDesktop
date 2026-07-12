@@ -377,6 +377,8 @@
     <string name="compose_player_resize_fit">Fit</string>
     <string name="compose_player_resize_stretch">Stretch</string>
     <string name="compose_player_resize_zoom">Zoom</string>
+    <string name="player_auto_crop_on">Auto-crop on</string>
+    <string name="player_auto_crop_off">Auto-crop off</string>
     <string name="compose_player_seek_back_10">Seek backward 10 seconds</string>
     <string name="compose_player_seek_delta_backward">-%1$ds</string>
     <string name="compose_player_seek_delta_forward">+%1$ds</string>
@@ -1707,6 +1709,10 @@
     <string name="settings_playback_nvidia_rtx_video_section">NVIDIA RTX Video</string>
     <string name="settings_playback_nvidia_rtx_super_resolution">RTX Video Super Resolution</string>
     <string name="settings_playback_nvidia_rtx_super_resolution_desc">Upscale low-resolution video using NVIDIA RTX AI Super Resolution.</string>
+    <!-- Playback settings desktop auto-crop -->
+    <string name="settings_playback_auto_crop_section">Auto-crop</string>
+    <string name="settings_playback_auto_crop">Auto-crop black bars</string>
+    <string name="settings_playback_auto_crop_desc">Automatically detect and remove black letterbox/pillarbox bars, following aspect-ratio changes during playback.</string>
     <!-- Playback settings iOS video output -->
     <string name="settings_playback_ios_video_output">iOS video output</string>
 

@@ -26,6 +26,8 @@ import nuvio.composeapp.generated.resources.compose_player_resize_fill
 import nuvio.composeapp.generated.resources.compose_player_resize_fit
 import nuvio.composeapp.generated.resources.compose_player_resize_stretch
 import nuvio.composeapp.generated.resources.compose_player_resize_zoom
+import nuvio.composeapp.generated.resources.player_auto_crop_off
+import nuvio.composeapp.generated.resources.player_auto_crop_on
 import nuvio.composeapp.generated.resources.generic_unknown
 import nuvio.composeapp.generated.resources.parental_alcohol
 import nuvio.composeapp.generated.resources.parental_frightening
@@ -108,6 +110,8 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
         runtime.resizeModeFillLabel = stringResource(Res.string.compose_player_resize_fill)
         runtime.resizeModeZoomLabel = stringResource(Res.string.compose_player_resize_zoom)
         runtime.resizeModeStretchLabel = stringResource(Res.string.compose_player_resize_stretch)
+        runtime.autoCropOnLabel = stringResource(Res.string.player_auto_crop_on)
+        runtime.autoCropOffLabel = stringResource(Res.string.player_auto_crop_off)
         runtime.downloadedLabel = stringResource(Res.string.compose_player_downloaded)
         runtime.airsPrefix = stringResource(Res.string.compose_player_airs_prefix)
         runtime.tbaLabel = stringResource(Res.string.compose_player_tba)

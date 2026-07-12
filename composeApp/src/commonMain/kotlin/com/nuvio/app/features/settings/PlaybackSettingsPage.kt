@@ -898,6 +898,23 @@ private fun PlaybackSettingsSection(
             }
         }
 
+        if (isDesktop) {
+            SettingsSection(
+                title = stringResource(Res.string.settings_playback_auto_crop_section),
+                isTablet = isTablet,
+            ) {
+                SettingsGroup(isTablet = isTablet) {
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_playback_auto_crop),
+                        description = stringResource(Res.string.settings_playback_auto_crop_desc),
+                        checked = autoPlayPlayerSettings.autoCropEnabled,
+                        isTablet = isTablet,
+                        onCheckedChange = PlayerSettingsRepository::setAutoCropEnabled,
+                    )
+                }
+            }
+        }
+
         if (isIos) {
             SettingsSection(
                 title = stringResource(Res.string.settings_playback_ios_audio_output_section),

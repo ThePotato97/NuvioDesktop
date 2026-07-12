@@ -142,6 +142,8 @@ internal expect object PlayerSettingsStorage {
     fun saveIosGamma(value: Int)
     fun loadNvidiaRtxSuperResolutionEnabled(): Boolean?
     fun saveNvidiaRtxSuperResolutionEnabled(enabled: Boolean)
+    fun loadAutoCropEnabled(): Boolean?
+    fun saveAutoCropEnabled(enabled: Boolean)
     fun exportToSyncPayload(): JsonObject
     fun replaceFromSyncPayload(payload: JsonObject)
 }

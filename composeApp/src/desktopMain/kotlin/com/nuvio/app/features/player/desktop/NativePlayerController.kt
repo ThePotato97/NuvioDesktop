@@ -63,6 +63,7 @@ internal class NativePlayerController(
         initialPositionMs: Long,
         decoderPriority: Int,
         nvidiaRtxSuperResolutionEnabled: Boolean,
+        autoCropEnabled: Boolean,
         onError: (String?) -> Unit,
     ) {
         val pending = PendingSource(
@@ -72,6 +73,7 @@ internal class NativePlayerController(
             initialPositionMs = initialPositionMs.coerceAtLeast(0L),
             decoderPriority = decoderPriority,
             nvidiaRtxSuperResolutionEnabled = nvidiaRtxSuperResolutionEnabled,
+            autoCropEnabled = autoCropEnabled,
             onError = onError,
         )
         pendingSource = pending
@@ -111,6 +113,8 @@ internal class NativePlayerController(
                     controlsPageUrl = NativePlayerBridge.controlsPageUrl,
                     decoderPriority = pending.decoderPriority,
                     nvidiaRtxSuperResolutionEnabled = pending.nvidiaRtxSuperResolutionEnabled,
+                    autoCropEnabled = pending.autoCropEnabled,
+                    autoCropScriptPath = NativePlayerBridge.autoCropScriptPath,
                     eventSink = eventSink,
                 )
                 if (handle == 0L) error("Native player did not return a handle.")
@@ -199,6 +203,12 @@ internal class NativePlayerController(
                     PlayerResizeMode.Stretch -> 3
                 },
             )
+        }
+    }
+
+    fun setAutoCropEnabled(enabled: Boolean) {
+        handle.takeIf { it != 0L }?.let { current ->
+            NativePlayerBridge.setAutoCropEnabled(current, enabled)
         }
     }
 
@@ -382,6 +392,7 @@ internal class NativePlayerController(
             initialPositionMs = pending.initialPositionMs,
             decoderPriority = pending.decoderPriority,
             nvidiaRtxSuperResolutionEnabled = pending.nvidiaRtxSuperResolutionEnabled,
+            autoCropEnabled = pending.autoCropEnabled,
             onError = pending.onError,
         )
     }
@@ -590,6 +601,7 @@ private data class PendingSource(
     val initialPositionMs: Long,
     val decoderPriority: Int,
     val nvidiaRtxSuperResolutionEnabled: Boolean,
+    val autoCropEnabled: Boolean,
     val onError: (String?) -> Unit,
 )
 
@@ -625,6 +637,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
         "keyboardVolumeDown" -> PlayerControlsAction.KeyboardVolumeDown
         "keyboardVolumeUp" -> PlayerControlsAction.KeyboardVolumeUp
         "resize" -> PlayerControlsAction.ResizeMode
+        "crop" -> PlayerControlsAction.CropToggle
         "speed" -> PlayerControlsAction.Speed
         "subtitles" -> PlayerControlsAction.Subtitles
         "audio" -> PlayerControlsAction.Audio
@@ -664,6 +677,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("pauseOverlayDescription", pauseOverlayDescription)
         append(',')
         appendJsonField("resizeModeLabel", resizeModeLabel)
+        append(',')
+        appendJsonField("autoCropEnabled", autoCropEnabled)
         append(',')
         appendJsonField("playbackSpeedLabel", playbackSpeedLabel)
         append(',')

@@ -780,6 +780,8 @@ public:
         JavaVM *vm,
         int decoderPriority,
         bool nvidiaRtxSuperResolutionEnabled,
+        bool autoCropEnabled,
+        std::string autoCropScriptPath,
         jobject sink,
         jmethodID method
     ) {
@@ -795,8 +797,8 @@ public:
         auto initState = std::make_shared<InitializationState>();
         auto self = shared_from_this();
         uiThread = std::thread(
-            [self, sourceUrl, headerLines, playWhenReady, initialPositionMs, controlsUrl, decoderPriority, nvidiaRtxSuperResolutionEnabled, initState]() {
-                self->runNativeUiThread(sourceUrl, headerLines, playWhenReady, initialPositionMs, controlsUrl, decoderPriority, nvidiaRtxSuperResolutionEnabled, initState);
+            [self, sourceUrl, headerLines, playWhenReady, initialPositionMs, controlsUrl, decoderPriority, nvidiaRtxSuperResolutionEnabled, autoCropEnabled, autoCropScriptPath, initState]() {
+                self->runNativeUiThread(sourceUrl, headerLines, playWhenReady, initialPositionMs, controlsUrl, decoderPriority, nvidiaRtxSuperResolutionEnabled, autoCropEnabled, autoCropScriptPath, initState);
             }
         );
 
@@ -970,6 +972,18 @@ public:
         }
     }
 
+    void setAutoCropEnabled(bool enabled) {
+        if (!autoCropScriptLoaded) return;
+        if (enabled) {
+            // cropdetect needs system-memory frames; ensure copy-back decoding.
+            // A no-op when hwdec is already a copy-back mode.
+            setStringProperty("hwdec", "auto-copy");
+            command({"script-message", "crop-set", "yes"});
+        } else {
+            command({"script-message", "crop-set", "no"});
+        }
+    }
+
     long long durationMs() {
         return (long long)std::llround(doubleProperty("duration", 0.0) * 1000.0);
     }
@@ -1112,6 +1126,7 @@ private:
     std::mutex controlsMutex;
     std::string pendingControlsJson;
     double initialStartSeconds = 0.0;
+    bool autoCropScriptLoaded = false;
 
     friend LRESULT CALLBACK messageWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     friend LRESULT CALLBACK containerWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -1124,11 +1139,13 @@ private:
         std::string controlsUrl,
         int decoderPriority,
         bool nvidiaRtxSuperResolutionEnabled,
+        bool autoCropEnabled,
+        std::string autoCropScriptPath,
         std::shared_ptr<InitializationState> initState
     ) {
         std::string failure;
         try {
-            initializeOnNativeUiThread(sourceUrl, headerLines, playWhenReady, initialPositionMs, controlsUrl, decoderPriority, nvidiaRtxSuperResolutionEnabled);
+            initializeOnNativeUiThread(sourceUrl, headerLines, playWhenReady, initialPositionMs, controlsUrl, decoderPriority, nvidiaRtxSuperResolutionEnabled, autoCropEnabled, autoCropScriptPath);
         } catch (const std::exception &error) {
             failure = error.what();
             cleanupUiResources();
@@ -1159,7 +1176,9 @@ private:
         long long initialPositionMs,
         const std::string &controlsUrl,
         int decoderPriority,
-        bool nvidiaRtxSuperResolutionEnabled
+        bool nvidiaRtxSuperResolutionEnabled,
+        bool autoCropEnabled,
+        const std::string &autoCropScriptPath
     ) {
         registerWindowClasses();
         uiThreadId = GetCurrentThreadId();
@@ -1211,7 +1230,7 @@ private:
         }
 
         startWebView(controlsUrl);
-        startMpv(sourceUrl, headerLines, playWhenReady, initialPositionMs, decoderPriority, nvidiaRtxSuperResolutionEnabled);
+        startMpv(sourceUrl, headerLines, playWhenReady, initialPositionMs, decoderPriority, nvidiaRtxSuperResolutionEnabled, autoCropEnabled, autoCropScriptPath);
         layoutNativeSubviews();
         if (!SetTimer(messageHwnd, NUVIO_TIMER_ID, 500, nullptr)) {
             throw std::runtime_error("Unable to start native player timer.");
@@ -1398,9 +1417,16 @@ private:
         bool playWhenReady,
         long long initialPositionMs,
         int decoderPriority,
-        bool nvidiaRtxSuperResolutionEnabled
+        bool nvidiaRtxSuperResolutionEnabled,
+        bool autoCropEnabled,
+        const std::string &autoCropScriptPath
     ) {
         MpvApi &api = mpvApi();
+        // Auto-crop needs cropdetect, a CPU lavfi filter operating on
+        // system-memory frames, so it is incompatible with full d3d11 hwdec and
+        // the d3d11vpp RTX super-resolution filter. When enabled it forces
+        // copy-back decoding and wins over RTX super-resolution.
+        bool useRtxSuperResolution = nvidiaRtxSuperResolutionEnabled && !autoCropEnabled;
         {
             std::lock_guard<std::mutex> lock(mpvMutex);
             mpv = api.create();
@@ -1415,18 +1441,33 @@ private:
             setMpvOptionStringLocked("input-vo-keyboard", "no");
             setMpvOptionStringLocked("keep-open", "yes");
             setMpvOptionStringLocked("vo", "gpu-next");
-            if (nvidiaRtxSuperResolutionEnabled) {
+            if (useRtxSuperResolution) {
                 setMpvOptionStringLocked("gpu-api", "d3d11");
                 setMpvOptionStringLocked("hwdec", "d3d11va");
                 setMpvOptionStringLocked("d3d11-adapter", "NVIDIA");
+            } else if (autoCropEnabled) {
+                setMpvOptionStringLocked("gpu-api", "auto");
+                setMpvOptionStringLocked("hwdec", "auto-copy");
             } else {
                 setMpvOptionStringLocked("gpu-api", "auto");
                 setMpvOptionStringLocked("hwdec", "auto");
             }
             setMpvOptionStringLocked("hwdec-codecs", "all");
 
-            if (nvidiaRtxSuperResolutionEnabled) {
+            if (useRtxSuperResolution) {
                 setMpvOptionStringLocked("vf", "d3d11vpp=scale=2:scaling-mode=nvidia");
+            }
+
+            // Load the dynamic auto-crop Lua script. The initial enabled state is
+            // set race-free through script-opts (the script's own file-loaded
+            // handler starts detection); live toggles go through the "crop-set"
+            // script-message (see setAutoCropEnabled).
+            if (!autoCropScriptPath.empty()) {
+                setMpvOptionStringLocked("script", autoCropScriptPath.c_str());
+                std::string cropOpts = "dynamic_crop_lite-debug=no,dynamic_crop_lite-enabled=";
+                cropOpts += autoCropEnabled ? "yes" : "no";
+                setMpvOptionStringLocked("script-opts", cropOpts.c_str());
+                autoCropScriptLoaded = true;
             }
             setMpvOptionStringLocked("target-colorspace-hint", "yes");
             if (decoderPriority == 0) {
@@ -2029,12 +2070,15 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     jstring controlsPageUrl,
     jint decoderPriority,
     jboolean nvidiaRtxSuperResolutionEnabled,
+    jboolean autoCropEnabled,
+    jstring autoCropScriptPath,
     jobject eventSink
 ) {
     HWND hostHwnd = (HWND)(intptr_t)hostViewPtr;
     std::string sourceUrlText = jstringToUtf8(env, sourceUrl);
     std::vector<std::string> headerLineValues = jstringArrayToVector(env, headerLines);
     std::string controlsPageUrlText = jstringToUtf8(env, controlsPageUrl);
+    std::string autoCropScriptPathText = jstringToUtf8(env, autoCropScriptPath);
     JavaVM *javaVm = nullptr;
     env->GetJavaVM(&javaVm);
 
@@ -2064,6 +2108,8 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
             javaVm,
             decoderPriority,
             nvidiaRtxSuperResolutionEnabled == JNI_TRUE,
+            autoCropEnabled == JNI_TRUE,
+            autoCropScriptPathText,
             eventSinkRef,
             eventMethod
         );
@@ -2204,6 +2250,12 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setResizeMode(JNIEnv *, jobject, jlong handle, jint mode) {
     auto player = playerFromHandle(handle);
     if (player) player->setResizeMode(mode);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setAutoCropEnabled(JNIEnv *, jobject, jlong handle, jboolean enabled) {
+    auto player = playerFromHandle(handle);
+    if (player) player->setAutoCropEnabled(enabled == JNI_TRUE);
 }
 
 extern "C" JNIEXPORT jstring JNICALL

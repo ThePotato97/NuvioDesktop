@@ -35,6 +35,8 @@ internal object NativePlayerBridge {
         controlsPageUrl: String,
         decoderPriority: Int,
         nvidiaRtxSuperResolutionEnabled: Boolean,
+        autoCropEnabled: Boolean,
+        autoCropScriptPath: String,
         eventSink: NativePlayerEventSink,
     ): Long
 
@@ -49,6 +51,7 @@ internal object NativePlayerBridge {
     external fun setVolume(handle: Long, level: Float)
     external fun volume(handle: Long): Float
     external fun setResizeMode(handle: Long, mode: Int)
+    external fun setAutoCropEnabled(handle: Long, enabled: Boolean)
     external fun durationMs(handle: Long): Long
     external fun positionMs(handle: Long): Long
     external fun bufferedPositionMs(handle: Long): Long
@@ -95,6 +98,7 @@ internal object NativePlayerBridge {
     external fun setWindowsDisplaySleepInhibited(inhibited: Boolean): Boolean
 
     val controlsPageUrl: String by lazy { controlsPageAssets.url }
+    val autoCropScriptPath: String by lazy { controlsPageAssets.autoCropScriptPath }
     private val controlsPageAssets: ControlsPageAssets by lazy { exportControlsPageAssets() }
 
     fun preloadAsync() {
@@ -279,8 +283,14 @@ internal object NativePlayerBridge {
             resource = "/composeResources/nuvio.composeapp.generated.resources/font/jetbrains_sans_bold.ttf",
             target = fontsDir.resolve("jetbrains_sans_bold.ttf"),
         )
+        val autoCropScript = root.resolve("dynamic_crop_lite.lua")
+        copyResourceIfChanged(
+            resource = "/player-ui/dynamic_crop_lite.lua",
+            target = autoCropScript,
+        )
         return ControlsPageAssets(
             url = htmlFile.toURI().toASCIIString(),
+            autoCropScriptPath = autoCropScript.absolutePath,
         )
     }
 
@@ -332,6 +342,7 @@ internal object NativePlayerBridge {
 
     private data class ControlsPageAssets(
         val url: String,
+        val autoCropScriptPath: String,
     )
 }
 

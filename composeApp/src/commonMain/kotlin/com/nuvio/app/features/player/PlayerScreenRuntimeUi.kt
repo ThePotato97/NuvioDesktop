@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
@@ -162,6 +164,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         else -> ""
     }
+    val playerSettingsForControls by PlayerSettingsRepository.uiState.collectAsState()
     val playerControlsState = PlayerControlsState(
         title = title,
         episodeText = episodeText,
@@ -177,6 +180,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         pauseOverlayEpisodeTitle = activeEpisodeTitle.orEmpty(),
         pauseOverlayDescription = (pauseDescription ?: activeStreamSubtitle).orEmpty(),
         resizeModeLabel = stringResource(resizeMode.labelRes),
+        autoCropEnabled = playerSettingsForControls.autoCropEnabled,
         playbackSpeedLabel = formatPlaybackSpeedLabel(playbackSnapshot.playbackSpeed),
         subtitlesLabel = stringResource(Res.string.compose_player_subs),
         audioLabel = stringResource(Res.string.compose_player_audio),
@@ -597,6 +601,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             return false
         }
         PlayerControlsAction.ResizeMode -> cycleResizeMode()
+        PlayerControlsAction.CropToggle -> toggleAutoCrop()
         PlayerControlsAction.Speed -> cyclePlaybackSpeed()
         PlayerControlsAction.Subtitles -> {
             refreshTracks()

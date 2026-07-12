@@ -30,6 +30,8 @@ const episode = document.getElementById("episode");
 const streamTitle = document.getElementById("streamTitle");
 const providerName = document.getElementById("providerName");
 const resizeLabel = document.getElementById("resizeLabel");
+const cropButton = document.getElementById("cropButton");
+const cropLabel = document.getElementById("cropLabel");
 const speedLabel = document.getElementById("speedLabel");
 const subtitlesLabel = document.getElementById("subtitlesLabel");
 const audioLabel = document.getElementById("audioLabel");
@@ -165,6 +167,7 @@ let state = {
   pauseOverlayEpisodeTitle: "",
   pauseOverlayDescription: "",
   resizeModeLabel: "Fit",
+  autoCropEnabled: false,
   playbackSpeedLabel: "1x",
   isFullscreen: false,
   volumeLevel: null,
@@ -433,6 +436,7 @@ const showPlayerToast = (message, { durationMs = playerToastDurationMs } = {}) =
 const settingToastLabel = command => {
   if (command === "resize") return state.resizeModeLabel || "Fit";
   if (command === "speed") return state.playbackSpeedLabel || "1x";
+  if (command === "crop") return state.autoCropEnabled ? "Auto-crop on" : "Auto-crop off";
   return "";
 };
 
@@ -482,7 +486,7 @@ const showCommandToast = command => {
 };
 
 const queueSettingToast = command => {
-  if (command !== "resize" && command !== "speed") return;
+  if (command !== "resize" && command !== "speed" && command !== "crop") return;
   pendingSettingToastCommand = command;
   pendingSettingToastToken += 1;
   const token = pendingSettingToastToken;
@@ -1864,6 +1868,10 @@ const renderChrome = () => {
   setActionButtonLabel("audio", state.audioLabel || "Audio");
   setActionButtonLabel("sources", state.sourcesLabel || "Sources");
   setActionButtonLabel("episodes", state.episodesLabel || "Episodes");
+  if (cropButton) {
+    cropButton.classList.toggle("active", Boolean(state.autoCropEnabled));
+    cropButton.setAttribute("aria-pressed", state.autoCropEnabled ? "true" : "false");
+  }
   lockedLabel.textContent = state.tapToUnlockLabel || "Tap to unlock";
   const showBuffering = Boolean(!showError && state.isLoading && !state.isLocked && !activeModal && !showOpening);
   bufferingStatus.classList.toggle("visible", showBuffering);
@@ -2015,6 +2023,8 @@ const actionShortcutCommandForEvent = event => {
       return "sources";
     case "KeyE":
       return "episodes";
+    case "KeyB":
+      return "crop";
     case "KeyP":
       return "keyboardToggle";
     default:
@@ -2469,6 +2479,7 @@ window.playerUpdate = update => {
 window.playerControls = nextState => {
   const previousCloseToken = Number(state.closeModalsToken) || 0;
   const previousResizeLabel = state.resizeModeLabel || "";
+  const previousAutoCrop = Boolean(state.autoCropEnabled);
   const previousSpeedLabel = state.playbackSpeedLabel || "";
   const previousVolumeLevel = typeof state.volumeLevel === "number" ? state.volumeLevel : NaN;
   state = { ...state, ...nextState };
@@ -2486,6 +2497,9 @@ window.playerControls = nextState => {
   if (pendingSettingToastCommand === "resize" && (state.resizeModeLabel || "") !== previousResizeLabel) {
     pendingSettingToastCommand = "";
     showPlayerToast(settingToastLabel("resize"));
+  } else if (pendingSettingToastCommand === "crop" && Boolean(state.autoCropEnabled) !== previousAutoCrop) {
+    pendingSettingToastCommand = "";
+    showPlayerToast(settingToastLabel("crop"));
   } else if (pendingSettingToastCommand === "speed" && (state.playbackSpeedLabel || "") !== previousSpeedLabel) {
     pendingSettingToastCommand = "";
     showPlayerToast(settingToastLabel("speed"));
