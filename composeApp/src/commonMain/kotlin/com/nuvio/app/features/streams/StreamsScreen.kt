@@ -40,8 +40,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material.icons.rounded.VideoLibrary
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -82,6 +84,9 @@ import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
 import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.SeriesDownloadCoordinator
+import com.nuvio.app.features.downloads.SeriesDownloadScope
+import com.nuvio.app.features.downloads.completionToastMessage
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -349,6 +354,7 @@ fun StreamsScreen(
             externalPlayerSupported = AppFeaturePolicy.externalPlayerSupported,
             externalPlayerEnabled = AppFeaturePolicy.externalPlayerSupported && playerSettings.externalPlayerEnabled,
             showDownloadAction = AppFeaturePolicy.downloadsEnabled,
+            showSeriesDownloadActions = AppFeaturePolicy.downloadsEnabled && isEpisode,
             onDismiss = { streamActionsTarget = null },
             onCopyLink = { stream ->
                 val directUrl = stream.playableDirectUrl ?: stream.externalOpenUrl
@@ -437,6 +443,28 @@ fun StreamsScreen(
                     )
                     NuvioToastController.show(result.toastMessage())
                 }
+            },
+            onDownloadSeries = { stream, downloadScope ->
+                if (seasonNumber == null || episodeNumber == null) {
+                    return@StreamActionsSheet
+                }
+                val result = SeriesDownloadCoordinator.downloadSeries(
+                    contentType = type,
+                    parentMetaId = parentMetaId,
+                    parentMetaType = parentMetaType,
+                    title = title,
+                    logo = logo,
+                    poster = poster,
+                    background = background,
+                    seedStream = stream,
+                    seedSeasonNumber = seasonNumber,
+                    seedEpisodeNumber = episodeNumber,
+                    downloadScope = downloadScope,
+                    onFinished = { progress ->
+                        NuvioToastController.show(progress.completionToastMessage())
+                    },
+                )
+                NuvioToastController.show(result.toastMessage(downloadScope))
             },
             onOpen = { stream, openExternally ->
                 onStreamActionOpen(
@@ -1207,9 +1235,11 @@ private fun StreamActionsSheet(
     externalPlayerSupported: Boolean,
     externalPlayerEnabled: Boolean,
     showDownloadAction: Boolean,
+    showSeriesDownloadActions: Boolean,
     onDismiss: () -> Unit,
     onCopyLink: (StreamItem) -> Unit,
     onDownload: (StreamItem) -> Unit,
+    onDownloadSeries: (StreamItem, SeriesDownloadScope) -> Unit,
     onOpen: (StreamItem, openExternally: Boolean) -> Unit,
 ) {
     if (stream == null) return
@@ -1299,6 +1329,33 @@ private fun StreamActionsSheet(
                         }
                     },
                 )
+
+                // Bulk downloads use this stream as the quality template for the whole run, so they
+                // only make sense from an episode.
+                if (showSeriesDownloadActions) {
+                    NuvioBottomSheetDivider()
+                    NuvioBottomSheetActionRow(
+                        icon = Icons.Rounded.LibraryAdd,
+                        title = stringResource(Res.string.downloads_series_download_season),
+                        onClick = {
+                            onDownloadSeries(stream, SeriesDownloadScope.Season)
+                            coroutineScope.launch {
+                                dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+                            }
+                        },
+                    )
+                    NuvioBottomSheetDivider()
+                    NuvioBottomSheetActionRow(
+                        icon = Icons.Rounded.VideoLibrary,
+                        title = stringResource(Res.string.downloads_series_download_show),
+                        onClick = {
+                            onDownloadSeries(stream, SeriesDownloadScope.EntireShow)
+                            coroutineScope.launch {
+                                dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+                            }
+                        },
+                    )
+                }
             }
         }
     }

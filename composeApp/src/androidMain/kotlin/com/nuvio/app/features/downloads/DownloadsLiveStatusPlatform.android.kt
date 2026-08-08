@@ -43,6 +43,7 @@ internal actual object DownloadsLiveStatusPlatform {
 
         val activeItems = items.filter { item ->
             item.status == DownloadStatus.Downloading ||
+                item.status == DownloadStatus.Queued ||
                 item.status == DownloadStatus.Paused ||
                 item.status == DownloadStatus.Failed
         }
@@ -129,6 +130,24 @@ internal actual object DownloadsLiveStatusPlatform {
                 }
             }
 
+            // Waiting for a queue slot: keep the notification ongoing with an indeterminate bar and
+            // a pause action, since the transfer will start on its own.
+            DownloadStatus.Queued -> {
+                notificationBuilder
+                    .setOngoing(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setProgress(100, 0, true)
+                    .addAction(
+                        0,
+                        runBlocking { getString(Res.string.compose_action_pause) },
+                        buildActionPendingIntent(
+                            context = context,
+                            action = DownloadsNotificationActionReceiver.actionPause,
+                            downloadId = item.id,
+                        ),
+                    )
+            }
+
             DownloadStatus.Paused,
             DownloadStatus.Failed,
             DownloadStatus.Completed,
@@ -172,6 +191,7 @@ internal actual object DownloadsLiveStatusPlatform {
                 }
             }
 
+            DownloadStatus.Queued -> runBlocking { getString(Res.string.downloads_status_queued) }
             DownloadStatus.Paused -> runBlocking { getString(Res.string.downloads_live_paused, detail) }
             DownloadStatus.Failed -> item.errorMessage?.takeIf { it.isNotBlank() } ?: runBlocking { getString(Res.string.downloads_live_failed) }
             DownloadStatus.Completed -> runBlocking { getString(Res.string.downloads_live_completed) }

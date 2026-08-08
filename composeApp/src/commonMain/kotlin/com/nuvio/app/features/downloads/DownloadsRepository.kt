@@ -16,12 +16,27 @@ import org.jetbrains.compose.resources.getString
 object DownloadsRepository {
     private const val MaxDownloadAttempts = 3
 
+    /**
+     * Transfers running at once. Bulk season/show downloads can enqueue dozens of episodes, and
+     * every concurrent transfer is a live HTTP connection competing for the same bandwidth, so the
+     * rest wait in [DownloadStatus.Queued] until a slot frees up.
+     */
+    private const val MaxConcurrentDownloads = 3
+
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
 
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
+
+    /**
+     * Ids currently occupying a queue slot. Kept separately from [activeHandles] because a transfer
+     * can finish on its IO thread before `DownloadsPlatformDownloader.start` has even returned its
+     * handle; counting handles would then leak the slot forever and eventually stall the queue.
+     */
+    private val runningDownloadIds = mutableSetOf<String>()
     private var hasLoaded = false
     private var nextDownloadOrdinal = 0L
+    private var isPumpingQueue = false
 
     fun ensureLoaded() {
         if (hasLoaded) return
@@ -35,6 +50,7 @@ object DownloadsRepository {
     fun clearLocalState() {
         activeHandles.values.forEach(DownloadsTaskHandle::cancel)
         activeHandles.clear()
+        runningDownloadIds.clear()
         hasLoaded = false
         _uiState.value = DownloadsUiState()
         notifyLiveStatusPlatform()
@@ -140,7 +156,7 @@ object DownloadsRepository {
         val existing = currentItems.firstOrNull { it.logicalContentKey == logicalKey }
         if (existing != null) {
             replacedExisting = true
-            activeHandles.remove(existing.id)?.cancel()
+            cancelTransfer(existing.id)
             DownloadsPlatformDownloader.removeFile(playableLocalFileUri(existing) ?: existing.localFileUri)
             DownloadsPlatformDownloader.removePartialFile(existing.fileName)
             currentItems.removeAll { it.id == existing.id }
@@ -180,7 +196,7 @@ object DownloadsRepository {
             sourceResponseHeaders = sanitizeResponseHeaders(stream.behaviorHints.proxyHeaders?.response),
             localFileUri = null,
             fileName = fileName,
-            status = DownloadStatus.Downloading,
+            status = DownloadStatus.Queued,
             downloadedBytes = 0L,
             totalBytes = null,
             errorMessage = null,
@@ -191,7 +207,7 @@ object DownloadsRepository {
         currentItems.add(0, item)
         publish(currentItems)
         persist()
-        startDownload(item)
+        pumpTransferQueue()
 
         return if (replacedExisting) {
             DownloadEnqueueResult.Replaced
@@ -200,44 +216,99 @@ object DownloadsRepository {
         }
     }
 
-    fun pauseDownload(downloadId: String) {
+    /**
+     * True when the episode already has a download that is finished or still making progress, so a
+     * bulk season download can skip re-fetching it.
+     */
+    fun hasDownloadFor(parentMetaId: String, seasonNumber: Int?, episodeNumber: Int?): Boolean {
         ensureLoaded()
-        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
-        if (item.status != DownloadStatus.Downloading) return
-
-        activeHandles.remove(downloadId)?.cancel()
-        mutateItem(downloadId) { current ->
-            current.copy(
-                status = DownloadStatus.Paused,
-                updatedAtEpochMs = DownloadsClock.nowEpochMs(),
-                errorMessage = null,
-            )
+        val logicalKey = buildLogicalKey(parentMetaId, seasonNumber, episodeNumber)
+        return _uiState.value.items.any { item ->
+            item.logicalContentKey == logicalKey && item.status != DownloadStatus.Failed
         }
+    }
+
+    fun pauseDownload(downloadId: String) {
+        pauseDownloads(listOf(downloadId))
+    }
+
+    /** Pauses every given transfer in one state update, then refills the freed queue slots. */
+    fun pauseDownloads(downloadIds: Collection<String>) {
+        ensureLoaded()
+        val targetIds = downloadIds.toSet()
+        if (targetIds.isEmpty()) return
+
+        val pausableIds = _uiState.value.items
+            .filter { it.id in targetIds && it.status.isPausable }
+            .map { it.id }
+            .toSet()
+        if (pausableIds.isEmpty()) return
+
+        pausableIds.forEach(::cancelTransfer)
+
+        val now = DownloadsClock.nowEpochMs()
+        publish(
+            _uiState.value.items.map { item ->
+                if (item.id in pausableIds) {
+                    item.copy(
+                        status = DownloadStatus.Paused,
+                        updatedAtEpochMs = now,
+                        errorMessage = null,
+                    )
+                } else {
+                    item
+                }
+            },
+        )
+        persist()
+        pumpTransferQueue()
     }
 
     fun pauseActiveDownloads() {
         ensureLoaded()
-        _uiState.value.items
-            .filter { it.status == DownloadStatus.Downloading }
-            .map { it.id }
-            .forEach(::pauseDownload)
+        pauseDownloads(
+            _uiState.value.items
+                .filter { it.status.isPausable }
+                .map { it.id },
+        )
     }
 
     fun resumeDownload(downloadId: String) {
+        resumeDownloads(listOf(downloadId))
+    }
+
+    /**
+     * Re-queues every given transfer. Resumed items go back to [DownloadStatus.Queued] rather than
+     * starting at once, so resuming a whole season still honours [MaxConcurrentDownloads].
+     */
+    fun resumeDownloads(downloadIds: Collection<String>) {
         ensureLoaded()
-        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
-        if (item.status != DownloadStatus.Paused && item.status != DownloadStatus.Failed) return
+        val targetIds = downloadIds.toSet()
+        if (targetIds.isEmpty()) return
 
-        val reset = item.copy(
-            status = DownloadStatus.Downloading,
-            errorMessage = null,
-            localFileUri = null,
-            updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+        val resumableIds = _uiState.value.items
+            .filter { it.id in targetIds && it.status.isResumable }
+            .map { it.id }
+            .toSet()
+        if (resumableIds.isEmpty()) return
+
+        val now = DownloadsClock.nowEpochMs()
+        publish(
+            _uiState.value.items.map { item ->
+                if (item.id in resumableIds) {
+                    item.copy(
+                        status = DownloadStatus.Queued,
+                        errorMessage = null,
+                        localFileUri = null,
+                        updatedAtEpochMs = now,
+                    )
+                } else {
+                    item
+                }
+            },
         )
-
-        replaceItem(reset)
         persist()
-        startDownload(reset)
+        pumpTransferQueue()
     }
 
     fun retryDownload(downloadId: String) {
@@ -245,15 +316,98 @@ object DownloadsRepository {
     }
 
     fun cancelDownload(downloadId: String) {
+        cancelDownloads(listOf(downloadId))
+    }
+
+    /** Cancels the given transfers and deletes both their finished files and any `.part` leftovers. */
+    fun cancelDownloads(downloadIds: Collection<String>) {
         ensureLoaded()
-        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
+        val targetIds = downloadIds.toSet()
+        if (targetIds.isEmpty()) return
 
-        activeHandles.remove(downloadId)?.cancel()
-        DownloadsPlatformDownloader.removeFile(playableLocalFileUri(item) ?: item.localFileUri)
-        DownloadsPlatformDownloader.removePartialFile(item.fileName)
+        val targets = _uiState.value.items.filter { it.id in targetIds }
+        if (targets.isEmpty()) return
 
-        publish(_uiState.value.items.filterNot { it.id == downloadId })
+        targets.forEach { item ->
+            cancelTransfer(item.id)
+            DownloadsPlatformDownloader.removeFile(playableLocalFileUri(item) ?: item.localFileUri)
+            DownloadsPlatformDownloader.removePartialFile(item.fileName)
+        }
+
+        publish(_uiState.value.items.filterNot { it.id in targetIds })
         persist()
+        pumpTransferQueue()
+    }
+
+    // -- Series-level bulk actions -------------------------------------------------------------
+
+    /**
+     * Ids of the show's episode downloads, optionally narrowed to a single season. Passing a null
+     * [seasonNumber] targets the whole show.
+     */
+    private fun seriesDownloadIds(
+        parentMetaId: String,
+        seasonNumber: Int?,
+        predicate: (DownloadItem) -> Boolean,
+    ): List<String> {
+        ensureLoaded()
+        val normalizedParentMetaId = parentMetaId.trim()
+        return _uiState.value.items
+            .filter { item ->
+                item.parentMetaId == normalizedParentMetaId &&
+                    (seasonNumber == null || item.seasonNumber == seasonNumber) &&
+                    predicate(item)
+            }
+            .map { it.id }
+    }
+
+    fun pauseSeriesDownloads(parentMetaId: String, seasonNumber: Int? = null) {
+        pauseDownloads(seriesDownloadIds(parentMetaId, seasonNumber) { it.status.isPausable })
+    }
+
+    fun resumeSeriesDownloads(parentMetaId: String, seasonNumber: Int? = null) {
+        resumeDownloads(seriesDownloadIds(parentMetaId, seasonNumber) { it.status.isResumable })
+    }
+
+    fun deleteSeriesDownloads(parentMetaId: String, seasonNumber: Int? = null) {
+        cancelDownloads(seriesDownloadIds(parentMetaId, seasonNumber) { true })
+    }
+
+    // -- Transfer queue ------------------------------------------------------------------------
+
+    /**
+     * Starts queued transfers until [MaxConcurrentDownloads] are running. Safe to call from a
+     * download callback: the guard stops a synchronous `onSuccess` from re-entering the loop.
+     */
+    private fun pumpTransferQueue() {
+        if (isPumpingQueue) return
+        isPumpingQueue = true
+        try {
+            while (runningDownloadIds.size < MaxConcurrentDownloads) {
+                val next = _uiState.value.items
+                    .filter { it.status == DownloadStatus.Queued && it.id !in runningDownloadIds }
+                    .minWithOrNull(transferQueueComparator)
+                    ?: return
+
+                mutateItem(next.id) { current ->
+                    if (current.status != DownloadStatus.Queued) {
+                        current
+                    } else {
+                        current.copy(
+                            status = DownloadStatus.Downloading,
+                            errorMessage = null,
+                            updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                        )
+                    }
+                }
+
+                val started = _uiState.value.items.firstOrNull { it.id == next.id }
+                if (started == null || started.status != DownloadStatus.Downloading) return
+                startDownload(started)
+            }
+        } finally {
+            isPumpingQueue = false
+        }
     }
 
     private fun loadFromDisk() {
@@ -268,7 +422,12 @@ object DownloadsRepository {
         var shouldPersistNormalized = false
         val normalized = DownloadsCodec.decodeItems(payload)
             .map { item ->
-                val statusNormalized = if (item.status == DownloadStatus.Downloading) {
+                // Nothing survives a process restart, so anything mid-flight (running or waiting
+                // for a queue slot) comes back paused for the user to resume deliberately.
+                val statusNormalized = if (
+                    item.status == DownloadStatus.Downloading ||
+                    item.status == DownloadStatus.Queued
+                ) {
                     item.copy(
                         status = DownloadStatus.Paused,
                         errorMessage = null,
@@ -291,7 +450,20 @@ object DownloadsRepository {
         }
     }
 
+    /** Frees the queue slot held by a finished transfer. */
+    private fun releaseTransferSlot(downloadId: String) {
+        runningDownloadIds.remove(downloadId)
+        activeHandles.remove(downloadId)
+    }
+
+    /** Frees the slot *and* aborts the in-flight transfer. */
+    private fun cancelTransfer(downloadId: String) {
+        runningDownloadIds.remove(downloadId)
+        activeHandles.remove(downloadId)?.cancel()
+    }
+
     private fun startDownload(item: DownloadItem, attempt: Int = 1) {
+        runningDownloadIds.add(item.id)
         val request = DownloadPlatformRequest(
             sourceUrl = item.sourceUrl,
             sourceHeaders = item.sourceHeaders,
@@ -315,7 +487,7 @@ object DownloadsRepository {
                 }
             },
             onSuccess = { localFileUri, totalBytes ->
-                activeHandles.remove(item.id)
+                releaseTransferSlot(item.id)
                 mutateItem(item.id) { current ->
                     current.copy(
                         status = DownloadStatus.Completed,
@@ -330,9 +502,10 @@ object DownloadsRepository {
                         updatedAtEpochMs = DownloadsClock.nowEpochMs(),
                     )
                 }
+                pumpTransferQueue()
             },
             onFailure = onFailure@ { message ->
-                activeHandles.remove(item.id)
+                releaseTransferSlot(item.id)
                 val current = _uiState.value.items.firstOrNull { it.id == item.id }
                 if (current?.status == DownloadStatus.Downloading && attempt < MaxDownloadAttempts) {
                     startDownload(current, attempt + 1)
@@ -349,10 +522,18 @@ object DownloadsRepository {
                         )
                     }
                 }
+                // A failure frees a slot just like a success does — let the next episode start.
+                pumpTransferQueue()
             },
         )
 
-        activeHandles[item.id] = handle
+        // The transfer can complete on its IO thread before start() returns, in which case the slot
+        // has already been released and this handle refers to finished work.
+        if (item.id in runningDownloadIds) {
+            activeHandles[item.id] = handle
+        } else {
+            handle.cancel()
+        }
     }
 
     private fun mutateItem(downloadId: String, transform: (DownloadItem) -> DownloadItem) {
@@ -427,6 +608,25 @@ object DownloadsRepository {
                 destinationFileName = fileName,
             ) != null
 }
+
+/** A running or queued transfer can be paused; a finished one cannot. */
+private val DownloadStatus.isPausable: Boolean
+    get() = this == DownloadStatus.Downloading || this == DownloadStatus.Queued
+
+/** Paused and failed transfers can both be put back on the queue. */
+private val DownloadStatus.isResumable: Boolean
+    get() = this == DownloadStatus.Paused || this == DownloadStatus.Failed
+
+/**
+ * Queue order. Enqueue time comes first so a show queued later never jumps ahead of one already
+ * waiting; season/episode break ties within a bulk batch, whose items all share a timestamp,
+ * so a season downloads in viewing order rather than arbitrarily.
+ */
+private val transferQueueComparator: Comparator<DownloadItem> =
+    compareBy<DownloadItem> { it.createdAtEpochMs }
+        .thenBy { it.seasonNumber ?: Int.MAX_VALUE }
+        .thenBy { it.episodeNumber ?: Int.MAX_VALUE }
+        .thenBy { it.id }
 
 @Serializable
 private data class StoredDownloadsPayload(

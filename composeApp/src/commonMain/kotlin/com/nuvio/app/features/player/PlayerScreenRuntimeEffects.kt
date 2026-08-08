@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.downloads.downloadedEpisodesAsMetaVideos
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamRequest
 import com.nuvio.app.features.p2p.P2pStreamingEngine
@@ -37,6 +38,11 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         playerMetaVideos = MetaDetailsRepository.peek(parentMetaType, parentMetaId)?.videos ?: emptyList()
         if (playerMetaVideos.isEmpty()) {
             playerMetaVideos = MetaDetailsRepository.fetch(parentMetaType, parentMetaId)?.videos ?: emptyList()
+        }
+        if (playerMetaVideos.isEmpty()) {
+            // Offline, or meta the addons can no longer serve. Fall back to what is on disk so
+            // next-episode detection and autoplay keep working through a downloaded season.
+            playerMetaVideos = downloadedEpisodesAsMetaVideos(parentMetaId)
         }
     }
 

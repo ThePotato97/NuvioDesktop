@@ -11,6 +11,8 @@ import org.jetbrains.compose.resources.getString
 
 @Serializable
 enum class DownloadStatus {
+    /** Accepted, waiting for a free slot in [DownloadsRepository]'s transfer queue. */
+    Queued,
     Downloading,
     Paused,
     Completed,
@@ -53,6 +55,10 @@ data class DownloadItem(
 
     val isPlayable: Boolean
         get() = status == DownloadStatus.Completed && !localFileUri.isNullOrBlank()
+
+    /** True while the transfer still has work to do — queued, running, or resumable. */
+    val isPending: Boolean
+        get() = status != DownloadStatus.Completed
 
     val displaySubtitle: String
         get() = episodeTitle.orEmpty()
