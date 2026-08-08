@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.History
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,9 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.network.NetworkCondition
@@ -56,6 +55,7 @@ import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWidth
 import com.nuvio.app.features.home.components.HomeSkeletonRow
+import com.nuvio.app.features.home.components.posterGridColumnCountForWidth
 import com.nuvio.app.features.watched.WatchedRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -227,7 +227,7 @@ fun SearchScreen(
         modifier = modifier.fillMaxSize(),
     ) {
         val discoverColumns = remember(maxWidth) {
-            discoverColumnCountForWidth(maxWidth)
+            posterGridColumnCountForWidth(maxWidth)
         }
         val homeSectionPadding = remember(maxWidth) {
             homeSectionHorizontalPaddingForWidth(maxWidth.value)
@@ -321,7 +321,6 @@ fun SearchScreen(
                         items(2) {
                             HomeSkeletonRow(
                                 modifier = Modifier.padding(horizontal = homeSectionPadding),
-                                showHeaderAccent = !homeCatalogSettingsUiState.hideCatalogUnderline,
                             )
                         }
                     }
@@ -330,7 +329,6 @@ fun SearchScreen(
                         items(2) {
                             HomeSkeletonRow(
                                 modifier = Modifier.padding(horizontal = homeSectionPadding),
-                                showHeaderAccent = !homeCatalogSettingsUiState.hideCatalogUnderline,
                             )
                         }
                     }
@@ -374,7 +372,6 @@ fun SearchScreen(
                             item(key = "search_loading_more") {
                                 HomeSkeletonRow(
                                     modifier = Modifier.padding(horizontal = homeSectionPadding),
-                                    showHeaderAccent = !homeCatalogSettingsUiState.hideCatalogUnderline,
                                 )
                             }
                         }
@@ -384,15 +381,6 @@ fun SearchScreen(
         }
     }
 }
-
-private fun discoverColumnCountForWidth(screenWidth: Dp): Int =
-    when {
-        screenWidth >= 1400.dp -> 7
-        screenWidth >= 1200.dp -> 6
-        screenWidth >= 1000.dp -> 5
-        screenWidth >= 840.dp -> 4
-        else -> 3
-    }
 
 @Composable
 private fun SearchEmptyStateCard(
@@ -493,21 +481,6 @@ private fun SearchRecentRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .background(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(999.dp),
-                )
-                .padding(8.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.History,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
         Text(
             text = query,
             modifier = Modifier.weight(1f),

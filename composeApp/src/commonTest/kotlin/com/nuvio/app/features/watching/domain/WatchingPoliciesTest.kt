@@ -10,6 +10,46 @@ class WatchingPoliciesTest {
     private val show = WatchingContentRef(type = "series", id = "show")
 
     @Test
+    fun isReleasedByUsesExactInstantForZonedTimestamps() {
+        val exactEpochMs = 1_768_489_200_000L // 2026-01-15T15:00:00Z
+
+        assertFalse(
+            isReleasedBy(
+                todayIsoDate = "2026-01-15",
+                releasedDate = "2026-01-15T15:00:00Z",
+                nowEpochMs = exactEpochMs - 1L,
+            ),
+        )
+        assertTrue(
+            isReleasedBy(
+                todayIsoDate = "2026-01-15",
+                releasedDate = "2026-01-15T15:00:00Z",
+                nowEpochMs = exactEpochMs,
+            ),
+        )
+    }
+
+    @Test
+    fun isReleasedByTreatsDateOnlyValueAsUtcMidnight() {
+        val utcMidnightEpochMs = 1_768_435_200_000L // 2026-01-15T00:00:00Z
+
+        assertFalse(
+            isReleasedBy(
+                todayIsoDate = "2026-01-14",
+                releasedDate = "2026-01-15",
+                nowEpochMs = utcMidnightEpochMs - 1L,
+            ),
+        )
+        assertTrue(
+            isReleasedBy(
+                todayIsoDate = "2026-01-14",
+                releasedDate = "2026-01-15",
+                nowEpochMs = utcMidnightEpochMs,
+            ),
+        )
+    }
+
+    @Test
     fun hasWatchedAllMainSeasonEpisodes_ignores_specials() {
         val episodes = listOf(
             WatchingReleasedEpisode(videoId = "special", seasonNumber = 0, episodeNumber = 1, releasedDate = "2026-03-01"),
@@ -69,6 +109,20 @@ class WatchingPoliciesTest {
                 todayIsoDate = "2026-07-05",
                 releasedDate = "2026-07-12",
                 showUnairedNextUp = false,
+                available = false,
+            ),
+        )
+    }
+
+    @Test
+    fun shouldSurfaceNextEpisode_keeps_dated_unavailable_episode_visible_on_release_day() {
+        assertTrue(
+            shouldSurfaceNextEpisode(
+                watchedSeasonNumber = 1,
+                candidateSeasonNumber = 1,
+                todayIsoDate = "2026-07-12",
+                releasedDate = "2026-07-12T20:00:00",
+                showUnairedNextUp = true,
                 available = false,
             ),
         )

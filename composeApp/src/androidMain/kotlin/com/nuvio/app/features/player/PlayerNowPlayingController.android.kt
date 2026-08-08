@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -15,11 +14,11 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.nuvio.app.R
+import com.nuvio.app.core.build.AppFeaturePolicy
 import java.io.ByteArrayOutputStream
 import java.lang.ref.WeakReference
 import java.net.HttpURLConnection
@@ -28,9 +27,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 
-private const val NOW_PLAYING_TAG = "NuvioNowPlaying"
-private const val NOW_PLAYING_CHANNEL_ID = "nuvio_playback"
-private const val NOW_PLAYING_NOTIFICATION_ID = 0x4E55
 private const val SEEK_INTERVAL_MS = 10_000L
 private const val MAX_ARTWORK_DOWNLOAD_BYTES = 12 * 1024 * 1024
 private const val MAX_ARTWORK_EDGE_PX = 1_024
@@ -39,7 +35,6 @@ private const val ACTION_PLAY = "com.nuvio.app.nowplaying.PLAY"
 private const val ACTION_PAUSE = "com.nuvio.app.nowplaying.PAUSE"
 private const val ACTION_REWIND = "com.nuvio.app.nowplaying.REWIND"
 private const val ACTION_FAST_FORWARD = "com.nuvio.app.nowplaying.FAST_FORWARD"
-private const val ACTION_START_FOREGROUND = "com.nuvio.app.nowplaying.START_FOREGROUND"
 
 private data class AndroidNowPlayingMetadata(
     val title: String,
@@ -90,7 +85,10 @@ internal class AndroidPlayerNowPlayingController(
 
     private var metadata: AndroidNowPlayingMetadata? = null
     private var snapshot = PlayerPlaybackSnapshot()
-    private var artworkBitmap: Bitmap? = null
+    private var artworkArt: Bitmap? = null
+    private var artworkAlbumArt: Bitmap? = null
+    private var artworkDisplayIcon: Bitmap? = null
+    private var artworkNotificationIcon: Bitmap? = null
     private var released = false
     private var lastPublishedPositionMs = Long.MIN_VALUE
     private var lastPublishedDurationMs = Long.MIN_VALUE
@@ -103,7 +101,9 @@ internal class AndroidPlayerNowPlayingController(
         get() = !released && metadata != null
 
     init {
-        createNotificationChannel(appContext)
+        if (AppFeaturePolicy.mediaPlaybackForegroundServiceEnabled) {
+            createNotificationChannel(appContext)
+        }
         AndroidNowPlayingActionDispatcher.register(this)
     }
 
@@ -126,7 +126,10 @@ internal class AndroidPlayerNowPlayingController(
             mediaSession.isActive = true
 
             if (artworkChanged) {
-                artworkBitmap = null
+                artworkArt = null
+                artworkAlbumArt = null
+                artworkDisplayIcon = null
+                artworkNotificationIcon = null
                 loadArtwork(normalized.artworkUrl)
             }
 
@@ -184,7 +187,10 @@ internal class AndroidPlayerNowPlayingController(
         artworkGeneration.incrementAndGet()
         metadata = null
         snapshot = PlayerPlaybackSnapshot()
-        artworkBitmap = null
+        artworkArt = null
+        artworkAlbumArt = null
+        artworkDisplayIcon = null
+        artworkNotificationIcon = null
         resetPublishedPlaybackState()
         mediaSession.setMetadata(null)
         mediaSession.setPlaybackState(
@@ -209,13 +215,23 @@ internal class AndroidPlayerNowPlayingController(
         snapshot.durationMs.takeIf { it > 0L }?.let { durationMs ->
             builder.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
         }
-        artworkBitmap?.let { artwork ->
-            builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
-            builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
-            builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
+
+        val base = builder.build()
+        val withArtwork = artworkArt?.takeIf { !it.isRecycled }?.let { art ->
+            MediaMetadata.Builder(base)
+                .putBitmap(MediaMetadata.METADATA_KEY_ART, art)
+                .apply {
+                    artworkAlbumArt?.takeIf { !it.isRecycled }
+                        ?.let { putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it) }
+                    artworkDisplayIcon?.takeIf { !it.isRecycled }
+                        ?.let { putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, it) }
+                }
+                .build()
         }
 
-        mediaSession.setMetadata(builder.build())
+        if (withArtwork == null || runCatching { mediaSession.setMetadata(withArtwork) }.isFailure) {
+            runCatching { mediaSession.setMetadata(base) }
+        }
     }
 
     private fun publishPlaybackState(force: Boolean) {
@@ -269,13 +285,14 @@ internal class AndroidPlayerNowPlayingController(
     }
 
     private fun publishNotification() {
+        if (!AppFeaturePolicy.mediaPlaybackForegroundServiceEnabled) return
         val currentMetadata = metadata ?: return
         val notification = buildNotification(
             context = appContext,
             sessionToken = mediaSession.sessionToken,
             metadata = currentMetadata,
             snapshot = snapshot,
-            artwork = artworkBitmap,
+            artwork = artworkNotificationIcon?.takeIf { !it.isRecycled },
         )
         PlayerNowPlayingService.publish(appContext, notification)
     }
@@ -291,10 +308,12 @@ internal class AndroidPlayerNowPlayingController(
 
             mainHandler.post {
                 if (released || generation != artworkGeneration.get() || metadata?.artworkUrl != urlString) {
-                    bitmap?.recycle()
                     return@post
                 }
-                artworkBitmap = bitmap
+                artworkArt = bitmap
+                artworkAlbumArt = bitmap?.let(::copyArtwork)
+                artworkDisplayIcon = bitmap?.let(::copyArtwork)
+                artworkNotificationIcon = bitmap?.let(::copyArtwork)
                 publishMetadata()
                 publishNotification()
             }
@@ -323,67 +342,6 @@ class PlayerNowPlayingActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         AndroidNowPlayingActionDispatcher.dispatch(intent.action)
     }
-}
-
-class PlayerNowPlayingService : Service() {
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != ACTION_START_FOREGROUND) {
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
-
-        val notification = PlayerNowPlayingServiceState.notification
-        if (notification == null) {
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
-
-        startForeground(NOW_PLAYING_NOTIFICATION_ID, notification)
-        return START_NOT_STICKY
-    }
-
-    override fun onDestroy() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-        super.onDestroy()
-    }
-
-    companion object {
-        internal fun publish(context: Context, notification: Notification) {
-            PlayerNowPlayingServiceState.notification = notification
-            val intent = Intent(context, PlayerNowPlayingService::class.java)
-                .setAction(ACTION_START_FOREGROUND)
-            runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
-                context.getSystemService(NotificationManager::class.java)
-                    ?.notify(NOW_PLAYING_NOTIFICATION_ID, notification)
-            }.onFailure { error ->
-                Log.w(NOW_PLAYING_TAG, "Unable to publish playback notification", error)
-            }
-        }
-
-        internal fun hide(context: Context) {
-            PlayerNowPlayingServiceState.notification = null
-            runCatching { context.stopService(Intent(context, PlayerNowPlayingService::class.java)) }
-            context.getSystemService(NotificationManager::class.java)
-                ?.cancel(NOW_PLAYING_NOTIFICATION_ID)
-        }
-    }
-}
-
-private object PlayerNowPlayingServiceState {
-    @Volatile
-    var notification: Notification? = null
 }
 
 private object AndroidNowPlayingActionDispatcher {
@@ -532,6 +490,9 @@ private fun downloadArtwork(urlString: String): Bitmap? {
         connection.disconnect()
     }
 }
+
+private fun copyArtwork(bitmap: Bitmap): Bitmap? =
+    if (bitmap.isRecycled) null else runCatching { bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false) }.getOrNull()
 
 private fun decodeSampledBitmap(bytes: ByteArray, maxEdgePx: Int): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

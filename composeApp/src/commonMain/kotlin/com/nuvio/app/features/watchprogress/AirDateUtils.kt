@@ -2,62 +2,45 @@ package com.nuvio.app.features.watchprogress
 
 import androidx.compose.runtime.Composable
 import com.nuvio.app.core.format.formatReleaseDateWithoutYear
-import com.nuvio.app.features.watching.domain.daysUntilExplicitRelease
-import com.nuvio.app.features.watching.domain.isoCalendarDateOrNull
-import com.nuvio.app.features.trakt.parseTraktIsoDateTimeToEpochMs
+import com.nuvio.app.core.time.daysUntilEpisodeRelease
+import com.nuvio.app.core.time.parseEpisodeReleaseEpochMs
 import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.pluralStringResource
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun computeAirDateBadgeText(
     releasedIso: String?,
     todayIsoDate: String,
-    compact: Boolean
 ): String? {
     if (releasedIso.isNullOrBlank() || todayIsoDate.isBlank()) {
         return null
     }
 
-    val releaseEpoch = parseTraktIsoDateTimeToEpochMs(releasedIso)
+    val releaseEpoch = parseEpisodeReleaseEpochMs(releasedIso)
     if (releaseEpoch != null && WatchProgressClock.nowEpochMs() >= releaseEpoch) {
         return null
     }
 
-    val daysUntil = daysUntilExplicitRelease(
+    val daysUntil = daysUntilEpisodeRelease(
         todayIsoDate = todayIsoDate,
         releasedDate = releasedIso,
     ) ?: return null
 
     return when {
         daysUntil < 0 -> null
-        daysUntil == 0 -> {
-            if (compact) stringResource(Res.string.cw_airs_today_short)
-            else stringResource(Res.string.cw_airs_today)
-        }
-        daysUntil == 1 -> {
-            if (compact) stringResource(Res.string.cw_airs_tomorrow_short)
-            else stringResource(Res.string.cw_airs_tomorrow)
-        }
-        daysUntil in 2..7 -> {
-            if (compact) stringResource(Res.string.cw_airs_in_days_short_format, daysUntil)
-            else stringResource(Res.string.cw_airs_in_days_format, daysUntil)
-        }
+        daysUntil == 0 -> stringResource(Res.string.cw_airs_today)
+        daysUntil == 1 -> stringResource(Res.string.cw_airs_tomorrow)
+        daysUntil in 2..7 -> pluralStringResource(Res.plurals.cw_airs_in_days, daysUntil, daysUntil)
         else -> {
             val formattedDate = formatReleaseDateWithoutYear(releasedIso)
-            if (compact) stringResource(Res.string.cw_airs_date_short, formattedDate)
-            else stringResource(Res.string.cw_airs_date, formattedDate)
+            stringResource(Res.string.cw_airs_date, formattedDate)
         }
     }
 }
 
 fun parseReleaseDateToEpochMs(raw: String?): Long? {
-    if (raw.isNullOrBlank()) return null
-    val trimmed = raw.trim()
-    val epochMs = parseTraktIsoDateTimeToEpochMs(trimmed)
-    if (epochMs != null) return epochMs
-
-    val datePart = isoCalendarDateOrNull(trimmed) ?: return null
-    return CurrentDateProvider.localStartOfDayEpochMs(datePart)
+    return parseEpisodeReleaseEpochMs(raw)
 }
 
 class ReleaseAlertState(

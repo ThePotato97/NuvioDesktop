@@ -2,6 +2,7 @@ package com.nuvio.app.features.watchprogress
 
 import com.nuvio.app.features.cloud.TorboxCloudLibraryPosterUrl
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.trakt.parseTraktIsoDateTimeToEpochMs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -300,22 +301,6 @@ class WatchProgressRulesTest {
     }
 
     @Test
-    fun `Trakt playback next up seeds require TV percent threshold`() {
-        val belowSeedThreshold = entry(
-            videoId = "show:1:4",
-            parentMetaId = "show",
-            seasonNumber = 1,
-            episodeNumber = 4,
-            progressPercent = 94f,
-            source = WatchProgressSourceTraktPlayback,
-        )
-        val seed = belowSeedThreshold.copy(progressPercent = 95f)
-
-        assertFalse(belowSeedThreshold.shouldUseAsCompletedSeedForContinueWatching())
-        assertTrue(seed.shouldUseAsCompletedSeedForContinueWatching())
-    }
-
-    @Test
     fun `Trakt history is not treated as active resume`() {
         val history = entry(
             videoId = "show:1:4",
@@ -402,7 +387,7 @@ class WatchProgressRulesTest {
     }
 
     @Test
-    fun `completed progress does not cascade to watched history while Trakt progress is active`() {
+    fun `completed progress does not cascade when provider owns watched projection`() {
         val completed = entry(
             videoId = "movie-complete",
             isCompleted = true,
@@ -412,19 +397,19 @@ class WatchProgressRulesTest {
         assertFalse(
             shouldCascadeCompletedProgressToWatchedHistory(
                 entry = completed,
-                isUsingTraktProgress = true,
+                providerOwnsCompletedHistory = true,
             ),
         )
         assertTrue(
             shouldCascadeCompletedProgressToWatchedHistory(
                 entry = completed,
-                isUsingTraktProgress = false,
+                providerOwnsCompletedHistory = false,
             ),
         )
         assertFalse(
             shouldCascadeCompletedProgressToWatchedHistory(
                 entry = inProgress,
-                isUsingTraktProgress = false,
+                providerOwnsCompletedHistory = false,
             ),
         )
     }
@@ -481,7 +466,7 @@ class WatchProgressRulesTest {
         assertEquals(1779634800000L, t1)
 
         val t2 = parseReleaseDateToEpochMs("2026-05-24")
-        assertEquals(CurrentDateProvider.localStartOfDayEpochMs("2026-05-24"), t2)
+        assertEquals(parseTraktIsoDateTimeToEpochMs("2026-05-24T00:00:00Z"), t2)
 
         assertNull(parseReleaseDateToEpochMs(null))
         assertNull(parseReleaseDateToEpochMs("   "))
