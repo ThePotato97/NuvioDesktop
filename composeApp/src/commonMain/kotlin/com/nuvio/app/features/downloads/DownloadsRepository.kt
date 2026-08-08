@@ -23,6 +23,12 @@ object DownloadsRepository {
      */
     private const val MaxConcurrentDownloads = 3
 
+    /**
+     * Minimum gap between disk writes caused by progress updates. In-memory state still updates at
+     * the platform's reporting rate; only persistence is rate limited.
+     */
+    private const val ProgressPersistIntervalMs = 5_000L
+
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
 
@@ -37,6 +43,7 @@ object DownloadsRepository {
     private var hasLoaded = false
     private var nextDownloadOrdinal = 0L
     private var isPumpingQueue = false
+    private var lastProgressPersistEpochMs = 0L
 
     fun ensureLoaded() {
         if (hasLoaded) return
@@ -473,7 +480,7 @@ object DownloadsRepository {
         val handle = DownloadsPlatformDownloader.start(
             request = request,
             onProgress = { downloadedBytes, totalBytes ->
-                mutateItem(item.id) { current ->
+                mutateItemProgress(item.id) { current ->
                     if (current.status != DownloadStatus.Downloading) {
                         current
                     } else {
@@ -536,7 +543,28 @@ object DownloadsRepository {
         }
     }
 
-    private fun mutateItem(downloadId: String, transform: (DownloadItem) -> DownloadItem) {
+    /**
+     * Applies a byte-count update without writing the downloads database to disk every time.
+     *
+     * [persist] serialises the whole item list, so persisting per progress callback costs a full
+     * database write for every chunk received — enough to throttle the transfer itself. Progress
+     * counters are safe to lose: resume reads the real length of the `.part` file on disk rather
+     * than the persisted number, so a crash re-reads the truth either way.
+     */
+    private fun mutateItemProgress(downloadId: String, transform: (DownloadItem) -> DownloadItem) {
+        val now = DownloadsClock.nowEpochMs()
+        val shouldPersist = now - lastProgressPersistEpochMs >= ProgressPersistIntervalMs
+        if (shouldPersist) {
+            lastProgressPersistEpochMs = now
+        }
+        mutateItem(downloadId, persistToDisk = shouldPersist, transform = transform)
+    }
+
+    private fun mutateItem(
+        downloadId: String,
+        persistToDisk: Boolean = true,
+        transform: (DownloadItem) -> DownloadItem,
+    ) {
         var changed = false
         val updated = _uiState.value.items.map { item ->
             if (item.id == downloadId) {
@@ -549,7 +577,9 @@ object DownloadsRepository {
 
         if (changed) {
             publish(updated)
-            persist()
+            if (persistToDisk) {
+                persist()
+            }
         }
     }
 

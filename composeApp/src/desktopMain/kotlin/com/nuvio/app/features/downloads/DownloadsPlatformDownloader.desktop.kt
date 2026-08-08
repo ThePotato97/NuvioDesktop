@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import java.awt.Desktop
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URI
@@ -17,6 +18,12 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import kotlin.io.path.createDirectories
+
+/** 8 KB reads mean a syscall and a progress callback per 8 KB; 256 KB keeps the socket busy. */
+private const val downloadStreamBufferBytes = 256 * 1024
+
+/** Upper bound on progress callbacks, which are expensive on the repository side. */
+private const val progressReportIntervalMs = 250L
 
 private val desktopDownloadHttpClient: HttpClient = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(60))
@@ -73,19 +80,32 @@ internal actual object DownloadsPlatformDownloader {
                 onProgress(downloadedBytes, totalBytes)
 
                 response.body().use { input ->
-                    FileOutputStream(tempFile, appendToTemp).use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    BufferedOutputStream(
+                        FileOutputStream(tempFile, appendToTemp),
+                        downloadStreamBufferBytes,
+                    ).use { output ->
+                        val buffer = ByteArray(downloadStreamBufferBytes)
+                        var lastProgressEpochMs = 0L
                         while (true) {
                             ensureActive()
                             val read = input.read(buffer)
                             if (read <= 0) break
                             output.write(buffer, 0, read)
                             downloadedBytes += read.toLong()
-                            onProgress(downloadedBytes, totalBytes)
+
+                            // Reporting every chunk is what made downloads crawl: each callback
+                            // rewrites the whole downloads database. A few updates per second is
+                            // all a progress bar can show anyway.
+                            val now = System.currentTimeMillis()
+                            if (now - lastProgressEpochMs >= progressReportIntervalMs) {
+                                lastProgressEpochMs = now
+                                onProgress(downloadedBytes, totalBytes)
+                            }
                         }
                         output.flush()
                     }
                 }
+                onProgress(downloadedBytes, totalBytes)
 
                 if (destination.exists()) {
                     destination.delete()
