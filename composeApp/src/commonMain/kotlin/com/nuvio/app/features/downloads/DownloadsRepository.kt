@@ -1,6 +1,11 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.features.streams.StreamItem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,7 +19,20 @@ import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
 object DownloadsRepository {
-    private const val MaxDownloadAttempts = 3
+    /**
+     * Consecutive failures allowed *without transferring anything*. Long transfers routinely lose
+     * their connection — servers recycle them, proxies time out — and reconnecting with a Range
+     * request resumes fine. What matters is whether attempts are still making headway, so an
+     * attempt that moves bytes resets this. Counting lifetime attempts instead would fail a
+     * multi-gigabyte download after three ordinary reconnects.
+     */
+    private const val MaxAttemptsWithoutProgress = 5
+
+    /** Backstop against a server that accepts, sends a little, and drops forever. */
+    private const val MaxTotalAttempts = 500
+
+    /** Brief pause before reconnecting, so a server refusing instantly is not hammered. */
+    private const val RetryBackoffMs = 2_000L
 
     /**
      * Transfers running at once. Bulk season/show downloads can enqueue dozens of episodes, and
@@ -44,6 +62,9 @@ object DownloadsRepository {
     private var nextDownloadOrdinal = 0L
     private var isPumpingQueue = false
     private var lastProgressPersistEpochMs = 0L
+
+    /** Schedules reconnect backoffs; transfers themselves run on the platform downloader. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     fun ensureLoaded() {
         if (hasLoaded) return
@@ -469,8 +490,17 @@ object DownloadsRepository {
         activeHandles.remove(downloadId)?.cancel()
     }
 
-    private fun startDownload(item: DownloadItem, attempt: Int = 1) {
+    private fun startDownload(
+        item: DownloadItem,
+        attemptsWithoutProgress: Int = 1,
+        totalAttempts: Int = 1,
+    ) {
         runningDownloadIds.add(item.id)
+        // Baseline for deciding whether this attempt achieved anything.
+        val bytesAtAttemptStart = _uiState.value.items
+            .firstOrNull { it.id == item.id }
+            ?.downloadedBytes
+            ?: item.downloadedBytes
         val request = DownloadPlatformRequest(
             sourceUrl = item.sourceUrl,
             sourceHeaders = item.sourceHeaders,
@@ -512,12 +542,38 @@ object DownloadsRepository {
                 pumpTransferQueue()
             },
             onFailure = onFailure@ { message ->
-                releaseTransferSlot(item.id)
                 val current = _uiState.value.items.firstOrNull { it.id == item.id }
-                if (current?.status == DownloadStatus.Downloading && attempt < MaxDownloadAttempts) {
-                    startDownload(current, attempt + 1)
+                val madeProgress = (current?.downloadedBytes ?: 0L) > bytesAtAttemptStart
+                val nextAttemptsWithoutProgress = if (madeProgress) 1 else attemptsWithoutProgress + 1
+                val shouldRetry = current?.status == DownloadStatus.Downloading &&
+                    totalAttempts < MaxTotalAttempts &&
+                    nextAttemptsWithoutProgress <= MaxAttemptsWithoutProgress
+
+                if (shouldRetry && current != null) {
+                    // Keep holding the queue slot across the backoff, otherwise a queued item
+                    // starts in the gap and the retry pushes us past MaxConcurrentDownloads.
+                    activeHandles.remove(item.id)
+                    scope.launch {
+                        delay(RetryBackoffMs)
+                        val stillDownloading = _uiState.value.items
+                            .firstOrNull { it.id == item.id }
+                            ?.takeIf { it.status == DownloadStatus.Downloading }
+                        if (stillDownloading == null) {
+                            // Paused, cancelled or replaced while waiting — give the slot back.
+                            releaseTransferSlot(item.id)
+                            pumpTransferQueue()
+                        } else {
+                            startDownload(
+                                item = stillDownloading,
+                                attemptsWithoutProgress = nextAttemptsWithoutProgress,
+                                totalAttempts = totalAttempts + 1,
+                            )
+                        }
+                    }
                     return@onFailure
                 }
+
+                releaseTransferSlot(item.id)
                 mutateItem(item.id) { current ->
                     if (current.status != DownloadStatus.Downloading) {
                         current
