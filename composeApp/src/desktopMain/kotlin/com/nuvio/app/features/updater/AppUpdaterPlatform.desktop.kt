@@ -38,7 +38,9 @@ actual object AppUpdaterPlatform {
     actual val isSupported: Boolean = currentOs != DesktopUpdaterOs.UNKNOWN
 
     actual val releaseSource: AppUpdateReleaseSource = AppUpdateReleaseSource(
-        owner = "NuvioMedia",
+        // Fork builds update from this fork's own releases, not upstream's — upstream releases are
+        // built from different sources and would overwrite a fork build with the official one.
+        owner = "ThePotato97",
         repo = "NuvioDesktop",
         channelBranch = null,
         includePrereleases = true,
