@@ -410,6 +410,23 @@ jobs:
           }
           "WEBVIEW2_ROOT=$webView2Root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Resolve test build installer version
+        if: inputs.mode == 'build-only'
+        shell: pwsh
+        run: |
+          # Successive build-only runs share a version name, so they also share an MSI
+          # ProductVersion and Windows refuses to install one over another. Encode the version code
+          # as the minor and the run number as the build so each run strictly increases.
+          # MSI limits: major <= 255, minor <= 255, build <= 65535.
+          $versionCode = (
+            Select-String `
+              -Path composeApp/Configuration/DesktopVersion.properties `
+              -Pattern '^\s*VERSION_CODE\s*=\s*(\d+)'
+          ).Matches[0].Groups[1].Value
+          $packageVersion = "1.$versionCode.$env:GITHUB_RUN_NUMBER"
+          Write-Host "Test build installer version: $packageVersion"
+          "NUVIO_DESKTOP_PACKAGE_VERSION=$packageVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build MSI
         shell: pwsh
         run: |

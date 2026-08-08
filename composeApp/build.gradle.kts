@@ -479,7 +479,26 @@ val desktopReleaseVersionCode = (
     ?.takeIf { it.isNotBlank() }
     ?.toIntOrNull()
     ?: 1
-val desktopReleasePackageVersion = jpackageCompatibleVersion(desktopReleaseVersionName)
+/**
+ * MSI/DMG ProductVersion. Defaults to the declared version name.
+ *
+ * Windows Installer refuses to install a package whose UpgradeCode already exists at the same
+ * ProductVersion ("another version of this product is already installed"), so successive test
+ * builds of the same version name cannot replace one another. Overriding this lets each CI run
+ * produce a strictly increasing ProductVersion that installs over the last. Release builds leave it
+ * unset and keep the real version.
+ *
+ * Note this only affects the version embedded in the installer — artifact file names still use
+ * [desktopReleaseVersionName], so the release workflow finds the same paths either way.
+ */
+val desktopReleasePackageVersion = (
+    providers.gradleProperty("nuvio.desktop.packageVersion").orNull
+        ?: System.getenv("NUVIO_DESKTOP_PACKAGE_VERSION")
+    )
+    ?.trim()
+    ?.takeIf { it.isNotBlank() }
+    ?.let(::jpackageCompatibleVersion)
+    ?: jpackageCompatibleVersion(desktopReleaseVersionName)
 val windowsMsiUpgradeUuid = "395990ee-9b8a-3548-922c-e7a23a495b8d"
 val iosDistribution = (
     providers.gradleProperty("nuvio.ios.distribution").orNull
