@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import com.nuvio.app.features.details.MetaDetailsUiState
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.rememberDownloadedStreamGroup
+import com.nuvio.app.features.downloads.withDownloadedGroup
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.streams.StreamItem
@@ -154,9 +156,18 @@ internal fun PlayerScreenModalHosts(
         onDismiss = onVideoSettingsModalDismissed,
     )
 
+    // Same reasoning as the streams screen: opening the sources panel is manual selection, so the
+    // automatic download preference does not apply and the local copy needs to be listed.
+    val downloadedSourceGroup = rememberDownloadedStreamGroup(
+        parentMetaId = parentMetaId,
+        seasonNumber = activeSeasonNumber,
+        episodeNumber = activeEpisodeNumber,
+        videoId = activeVideoId,
+    )
+
     PlayerSourcesPanel(
         visible = showSourcesPanel,
-        streamsUiState = sourceStreamsState,
+        streamsUiState = sourceStreamsState.withDownloadedGroup(downloadedSourceGroup),
         contentTitle = contentTitle,
         currentSeason = activeSeasonNumber,
         currentEpisode = activeEpisodeNumber,

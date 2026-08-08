@@ -87,6 +87,8 @@ import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.SeriesDownloadCoordinator
 import com.nuvio.app.features.downloads.SeriesDownloadScope
 import com.nuvio.app.features.downloads.completionToastMessage
+import com.nuvio.app.features.downloads.rememberDownloadedStreamGroup
+import com.nuvio.app.features.downloads.withDownloadedGroup
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -231,6 +233,18 @@ fun StreamsScreen(
         )
     }
 
+    // Reaching this screen means manual selection, which bypasses the automatic
+    // prefer-a-download path — so surface any local copy as its own provider instead.
+    val downloadedGroup = rememberDownloadedStreamGroup(
+        parentMetaId = parentMetaId,
+        seasonNumber = seasonNumber,
+        episodeNumber = episodeNumber,
+        videoId = videoId,
+    )
+    val displayUiState = remember(uiState, downloadedGroup) {
+        uiState.withDownloadedGroup(downloadedGroup)
+    }
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -249,7 +263,7 @@ fun StreamsScreen(
                 seasonNumber = seasonNumber,
                 episodeNumber = episodeNumber,
                 episodeTitle = episodeTitle,
-                uiState = uiState,
+                uiState = displayUiState,
                 debridEnabled = debridSettings.canResolvePlayableLinks,
                 appendInstantServiceToDefaultName = debridSettings.canResolvePlayableLinks && !debridSettings.hasCustomStreamFormatting,
                 resumePositionMs = effectiveResumePositionMs,
@@ -269,7 +283,7 @@ fun StreamsScreen(
                 seasonNumber = seasonNumber,
                 episodeNumber = episodeNumber,
                 episodeTitle = episodeTitle,
-                uiState = uiState,
+                uiState = displayUiState,
                 debridEnabled = debridSettings.canResolvePlayableLinks,
                 appendInstantServiceToDefaultName = debridSettings.canResolvePlayableLinks && !debridSettings.hasCustomStreamFormatting,
                 resumePositionMs = effectiveResumePositionMs,

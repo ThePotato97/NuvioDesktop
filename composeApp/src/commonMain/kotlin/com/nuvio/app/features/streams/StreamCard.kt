@@ -39,9 +39,37 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
 import com.nuvio.app.features.debrid.DebridProviders
+
+/**
+ * Opens the same actions the long-press gesture does, via a right-click.
+ *
+ * Long-press is the natural gesture on touch but has no visible affordance and is awkward with a
+ * mouse, which left the download actions effectively undiscoverable on desktop. Touch devices have
+ * no secondary button, so this is inert there.
+ */
+private fun Modifier.secondaryClickable(
+    enabled: Boolean,
+    onSecondaryClick: (() -> Unit)?,
+): Modifier {
+    if (!enabled || onSecondaryClick == null) return this
+    return pointerInput(onSecondaryClick) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent()
+                if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                    event.changes.forEach { it.consume() }
+                    onSecondaryClick()
+                }
+            }
+        }
+    }
+}
 
 @Composable
 internal fun StreamCard(
@@ -94,6 +122,7 @@ internal fun StreamCard(
                 onClick = onClick,
                 onLongClick = onLongClick,
             )
+            .secondaryClickable(enabled = enabled, onSecondaryClick = onLongClick)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
